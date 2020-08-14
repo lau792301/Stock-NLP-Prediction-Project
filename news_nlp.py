@@ -1,9 +1,10 @@
+# %%
 import json
 from datetime import datetime
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 import pickle
 
-
+# %%
 def load_json(path):
     data = []
     with open(path) as json_file:
@@ -93,6 +94,7 @@ def main():
     ## Get result
     # with open(out_path, "rb") as f:
     #     result = pickle.load(f)
+# %%
 
 if __name__ == '__main__':
     main()
