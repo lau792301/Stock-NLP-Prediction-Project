@@ -98,6 +98,7 @@ def get_full_data(stock_code, new_df, start_date = START_DATE, end_date = END_DA
     stock_data = fill_missing(stock_data)
     pre_stock_data = preprocessing(stock_data)
     full_data = consoildate(pre_stock_data, new_df)
+    full_data = full_data.reset_index()
     if save:
         full_data.to_csv(f'{stock_code}_full_dataset.csv', index = False)
     return full_data
