@@ -81,6 +81,7 @@ def preprocessing(df, alpha = 0.01):
     df['price_gap'] = df['high'] - df['low']
     df['is_closed_by_high'] = (df['close'] * (1 + alpha) >= df['high']).astype(int)
     df['is_closed_by_low'] = (df['close'] <= df['low'] * (1  + alpha)).astype(int)
+    df['up_down'] = (df['close_change'] >= 0).astype(int)
     return df
 
 def consoildate(stock_df, new_df):
@@ -111,5 +112,7 @@ get_full_data('AAPL', news_data, save  = True)
 # stock_data = get_finance_data('AAA', start_date = START_DATE, end_date = END_DATE)
 # stock_data = fill_missing(stock_data)
 # pre_stock_data = preprocessing(stock_data)
+
+# %%
 
 # %%
