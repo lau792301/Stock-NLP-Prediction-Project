@@ -2,50 +2,110 @@
 import pandas as pd
 import numpy as np
 
-# %%
-from math import sqrt
-from numpy import split
-from numpy import array
-from pandas import read_csv
-from sklearn.metrics import mean_squared_error
-from matplotlib import pyplot
 from keras.models import Sequential
 from keras.layers import Dense, UpSampling1D
-from keras.layers import Flatten
 from keras.layers import LSTM
 from keras.layers import RepeatVector
 from keras.layers import TimeDistributed, Lambda, RepeatVector
 from sklearn.model_selection import train_test_split
+from tensorflow import feature_column
+import tensorflow as tf
+from keras.callbacks import EarlyStopping
+import random
+import os
+
+from build_dataset import get_full_data
 
 # %%
-# TODO: read from csv
-# Create Radom Data
-'''
-x1 0.0 0.2 0.4 0.6
-x2  3   4    5  6
-x3 100 200 -100 -200
-x4 0.5 0.7 -0.1 -0.2
-Yt+1= x1 * x2 +100 * x4
-       
-'''
-length = 100
-df = pd.DataFrame()
-df['x1'] = [i/float(length) for i in range(length)]
-df['x2'] = [i**2 for i in range(length)]
-df['y'] = df['x1'] + df['x2'] 
+SEED_VALUE = 2020
+N_INPUT = 7
+N_OUTPUT = 1
+EPOCHS = 50
+LEARNING_RATE = 0.001
+N_NEURONS =  100
 
-df_value = df.values
-x_value = df.drop(columns = 'y').values
-y_value = df['y'].values.reshape(-1,1)
+STOCK_CODE = 'QQQ'
+NEWS_DATA_PATH = 'consolidated_news.csv'
 # %%
-'''
-Need to DO
-1. convert data can set input = n , output = n
-2. split data (train, valid, test) and it can set shuffle with random seed
-3. normalization data function
-4. model
-5. error_measurement by output (t_1: error, t_2: error)
-'''
+# Preprocessing
+def scaling(df, meta_data = False):
+    df = df.copy()
+    df = df.sort_values('rec_date')
+    shift_df = df.shift(1).copy()
+    # % Percentage Change
+    # close_change, volume_change
+    df['close_change'] = df['close_change'] / shift_df['close']
+    df['volume_change'] = df['volume_change'] / shift_df['volume']
+    df = df[1:].reset_index(drop = True).copy()
+    # Min Max
+    # Open, High, Low, Close, Volume, Price_gap
+    meta_data_dict = {}
+    for col in ['open', 'high', 'low', 'close', 'volume', 'price_gap']:
+        col_info = {}
+        #
+        col_info['max'] = df[col].max()
+        col_info['min'] = df[col].min()
+        
+        df[col] = (df[col] - col_info['min']) / (col_info['max'] - col_info['min'])
+        
+        meta_data_dict[col] = col_info
+    if meta_data:
+        return df, meta_data_dict
+    return df
+
+def get_feature_layer(news_col_list, stock = True, news = True, holiday = True, month =  True, weekday = True):
+    #  FeatureColumn
+    feature_columns = []
+    if stock:
+        # Numeric Columns
+        numeric_cols = ['open', 'high', 'low', 
+                        'close', 'volume', 'close_change',
+                        'volume_change', 'price_gap']
+        for header in numeric_cols :
+            feature_columns.append(feature_column.numeric_column(header))
+    if news:
+        for header in news_col_list:
+            feature_columns.append(feature_column.numeric_column(header))
+    
+
+    # # Categorical Columns
+    if month:
+    # Month
+        month_type = feature_column.categorical_column_with_vocabulary_list(
+                    'month', [month for month in range(1,13)])  #1 -12
+        month_type_one_hot = feature_column.indicator_column(month_type)
+        feature_columns.append(month_type_one_hot)
+
+    if weekday:
+    # Weekday
+        weekday_type = feature_column.categorical_column_with_vocabulary_list(
+                    'weekday', [weekday for weekday in range(1,8)])  # 1 - 7
+        weekday_type_one_hot = feature_column.indicator_column(weekday_type)
+        feature_columns.append(weekday_type_one_hot)
+
+    if holiday:
+    # Holiday
+        holiday_type = feature_column.categorical_column_with_vocabulary_list(
+                    'holiday', [1])
+        holiday_type_one_hot = feature_column.indicator_column(holiday_type)
+        feature_columns.append(holiday_type_one_hot)
+
+    if stock:
+        # is_closed_by_high
+        is_closed_by_high_type = feature_column.categorical_column_with_vocabulary_list(
+                    'is_closed_by_high', [1])
+        is_closed_by_high_type_one_hot = feature_column.indicator_column(is_closed_by_high_type)
+        feature_columns.append(is_closed_by_high_type_one_hot)
+
+        # is_closed_by_low
+        is_closed_by_low_type = feature_column.categorical_column_with_vocabulary_list(
+                    'is_closed_by_low', [1])
+        is_closed_by_low_type_one_hot = feature_column.indicator_column(is_closed_by_low_type)
+        feature_columns.append(is_closed_by_low_type_one_hot)
+
+    feature_layer = tf.keras.layers.DenseFeatures(feature_columns, trainable = False)
+    return feature_layer
+
 def build_data(x_value, y_value ,n_input, n_output):
     X, Y = list(), list()
     in_start = 0
@@ -64,18 +124,67 @@ def build_data(x_value, y_value ,n_input, n_output):
         in_start += 1
     return np.array(X), np.array(Y)            
 
-X, Y = build_data(x_value, y_value, 3, 4)
-# Y = Y.reshape(Y.shape[0], Y.shape[1])
+def get_meta_index(df, n_input): #, n_ouput  = N_OUTPUT):
+    df = df.copy().reset_index(drop = True)
+    meta_dict = {}
+    # Offline Index List
+    offline_index_list = df[(df['holiday'] == 1) |  (df['weekday'].isin([6,7]))].index
+    offline_index_list = [index - n_input for index in offline_index_list if (index >= n_input) ]
+    meta_dict['offline_index'] = offline_index_list
+    # Month Index Dict of list 
+    month_index_dict = {inc_month: df[df['inc_month'] == inc_month].index - 30 for inc_month in df['inc_month'].unique()}
+    meta_dict['month_index'] = month_index_dict
+    return  meta_dict
+
+def filter_offline(value, offline_index_list, month_index_dict):
+    filtered_inc_month_value_dict = {}
+    for inc_month, index_list in month_index_dict.items():
+        filtered_month_index_list = []
+        for month_index in index_list:
+            if month_index not  in offline_index_list:
+                filtered_month_index_list.append(value[month_index])
+        filtered_inc_month_value_dict[inc_month] = np.array(filtered_month_index_list)
+    return  filtered_inc_month_value_dict
+    
+def integrate_month_value(inc_month_value_dict, split_month = 12):
+    inc_month_key_list = list(inc_month_value_dict.keys())
+    # Train
+    train_value = []
+    for inc_month in inc_month_key_list[:-split_month]:
+        train_value.extend(inc_month_value_dict[inc_month])
+    # Test
+    test_value = []
+    for inc_month in inc_month_key_list[-split_month:]:
+        test_value.extend(inc_month_value_dict[inc_month])
+    return np.array(train_value), np.array(test_value)
 
 # %%
-def build_model(n_inputs, n_features, n_outputs, auto_encoder = True, n_repeat = 3):
+# Model Part
+def build_model(n_inputs, n_features, n_outputs, auto_encoder = True, n_repeat = 3, learning_rate = 0.001,
+                n_neurons =  N_NEURONS):
+    # def self_measurement(y_true, y_pred):
+    #     return tf.keras.backend.mean(y_pred)
+
     # define model
     model = Sequential()
+    '''
     # LSTM AutoEncoder (Unsupervised Learning)
     # https://machinelearningmastery.com/lstm-autoencoders/
-    model.add(LSTM(n_neurons, input_shape = (n_inputs, n_features), return_sequences=False))
-    model.add(RepeatVector(n_repeat))
-    model.add(LSTM(n_neurons, return_sequences=True))
+    https://towardsdatascience.com/step-by-step-understanding-lstm-autoencoder-layers-ffab055b6352
+    '''
+    if auto_encoder:
+        # model.add(LSTM(n_neurons, input_shape = (n_inputs, n_features), return_sequences=False))
+        # model.add(RepeatVector(n_inputs))
+        # model.add(LSTM(n_neurons, return_sequences=True))
+        model.add(LSTM(128, input_shape = (n_inputs, n_features), return_sequences=True))
+        model.add(LSTM(64, activation='relu', return_sequences=False))
+        model.add(RepeatVector(n_inputs))
+        model.add(LSTM(64, activation='relu', return_sequences=True))
+        model.add(LSTM(128, activation='relu', return_sequences=True))
+        model.add(LSTM(n_neurons, return_sequences=True))
+    else:
+        model.add(LSTM(n_neurons, input_shape = (n_inputs, n_features), return_sequences=True, 
+                    kernel_initializer='random_uniform', bias_initializer='zeros'))
     '''
     return_sequences default: False, return single hidden value (2 dimension)
                             True, return all time step hidden value. It also return lstm1, state_h, state_c.
@@ -86,22 +195,102 @@ def build_model(n_inputs, n_features, n_outputs, auto_encoder = True, n_repeat =
     model.add(Lambda(lambda x: x[:,-n_outputs:,:]))
     # https://stackoverflow.com/questions/55532683/why-is-timedistributed-not-needed-in-my-keras-lstm
     # model.add(Dense(1))
-    model.add(TimeDistributed(Dense(1)))
-    model.compile(loss='mean_squared_error', optimizer='adam')
-
+    model.add(TimeDistributed(Dense(1, activation = 'softmax', kernel_initializer='random_uniform', bias_initializer='zeros')))
+    opt = tf.keras.optimizers.Adam(learning_rate= learning_rate)
+    model.compile(loss="binary_crossentropy", optimizer= opt,
+                metrics = ['accuracy'])#,  self_measurement])
     return model
 
-def train_model(model, X, Y, shuffle = True, random_state = 1):
-    train_x, valid_x, train_y, valid_y =  train_test_split(X, Y, shuffle = shuffle, random_state = random_state)
-    history = model.fit(train_x, train_y, validation_data = (valid_x, valid_y))
+def train_model(model, X, Y, valid_split = 0.1, shuffle = True, random_state = SEED_VALUE, epochs = EPOCHS,
+                early_stop =  False):
+    # Set Seed
+    '''
+    Keras gets its source of randomness from the NumPy random number generator.
+    '''
+    # https://medium.com/@bc165870081/keras-model%E7%9A%84%E5%AF%A6%E9%A9%97%E5%9C%A8%E7%8F%BE%E6%80%A7-f0c926af4634
+    # os.environ['PYTHONHASHSEED']=str(SEED_VALUE)
+    random.seed(SEED_VALUE)
+    np.random.seed(SEED_VALUE)
+    tf.random.set_seed(SEED_VALUE)
+    # tf.compat.v1.set_random_seed(SEED_VALUE)
+
+    train_x, valid_x, train_y, valid_y =  train_test_split(X, Y, shuffle = shuffle, random_state = random_state, test_size = valid_split)
+    # simple early stopping
+    if early_stop:
+        es = EarlyStopping(monitor='val_accuracy', mode='max', verbose=1, patience = min(int(EPOCHS * 0.1), 50))
+        history  = model.fit(train_x, train_y, validation_data = (valid_x, valid_y), epochs=epochs, callbacks = [es])
+    else:
+        history  = model.fit(train_x, train_y, validation_data = (valid_x, valid_y), epochs=epochs)
+    # history = model.fit(X, Y, validation_split= valid_split, shuffle = shuffle, epochs=epochs)#, callbacks = [es])
     return model, history
 
 
-n_neurons =  100
-n_inputs, n_features  = X.shape[1], X.shape[2]
-n_outputs = Y.shape[1]
-n_repeat = 3
+# %%
+def run(stock_code  = STOCK_CODE, scale = True, n_neurons  = N_NEURONS, 
+    auto_encoder  = False, learning_rate =  LEARNING_RATE, n_input = N_INPUT,
+    include_news = True, training_valid_split = 0.1,
+    split_month = 12):
+    ###### Init ######
+    output_dict = {}
+    result_dict = {}
+    ######  Read Data ######
+    new_df = pd.read_csv(NEWS_DATA_PATH)
+    df = get_full_data(STOCK_CODE, new_df)
+    df['rec_date'] = pd.to_datetime(df['rec_date'])
+    df['inc_month'] = (df['rec_date'].dt.year).astype(str) + (df['rec_date'].dt.month).astype(str).apply(lambda x:x.zfill(2))
+    print('Read Data Done')
+    if scale:
+        print('Data is scaled')
+        df = scaling(df)
+    print(df)
+    
+    ###### Preprocessing ######
+    news_cols = [col for col in df.columns if ('headline'  in col) or ('abstract' in col)]
+    feature_layer = get_feature_layer(news_col_list = news_cols , news = include_news)
+    X, Y = feature_layer(dict(df)).numpy(), df['up_down'].values.reshape(-1,1)
+    # Index Filtering for only online data
+    meta_index_dict = get_meta_index(df, n_input)
+    offline_index_list =  meta_index_dict['offline_index']
+    month_index_dict = meta_index_dict['month_index']
 
-model = build_model(n_inputs = n_inputs,
-                        n_features = n_features, n_outputs = n_outputs)
-model, history = train_model(model , X, Y)
+    T_X, T_Y = build_data(X , Y, n_input = n_input, n_output = 1)
+    online_monthly_x_value_dict = filter_offline(T_X, offline_index_list, month_index_dict)
+    online_monthly_y_value_dict = filter_offline(T_Y, offline_index_list, month_index_dict)
+    # Integration and Split For Training and Testing Dataset
+    train_x, test_x = integrate_month_value(online_monthly_x_value_dict, split_month = split_month)
+    train_y, test_y = integrate_month_value(online_monthly_y_value_dict, split_month = split_month)
+
+    ###### Model ######
+    # Model Pre-setting
+    n_inputs, n_features  = train_x.shape[1], train_x.shape[2]
+    n_outputs = train_y.shape[1]
+
+    # Model Setup
+    model = build_model(n_inputs = n_inputs,
+                        n_features = n_features, n_outputs = n_outputs, auto_encoder= auto_encoder,n_repeat  = 10,
+                        learning_rate = learning_rate, n_neurons = n_neurons)
+    # Model Training
+    model, history = train_model(model , train_x, train_y, valid_split= training_valid_split)
+    output_dict['model'] = model
+    output_dict['history'] = history
+    # Result Measurement
+    result_dict['overall_training'] = model.evaluate(train_x, train_y)[1]
+    result_dict['overall_testing'] =  model.evaluate(test_x, test_y)[1]
+    print('Overall Training Result', result_dict['overall_training'])
+    print('Overall Testing Result', result_dict['overall_testing'])
+    # By month measurement
+    test_month_list = list(online_monthly_x_value_dict.keys())[-split_month:]
+    for inc_month in test_month_list:
+        result_dict[inc_month] = model.evaluate(online_monthly_x_value_dict[inc_month],
+                                                online_monthly_y_value_dict[inc_month])[1]
+        print(f'{inc_month} testing accuarcy:',  result_dict[inc_month])
+    output_dict['results'] = result_dict
+    return output_dict
+        
+# %%
+output_dict = run()
+# %%
+for stock_code in ['QQQ', 'AAPL']:
+    for n_input in [7,14]:
+        for include_news in [True , False]:
+           run(stock_code = stock_code, include_news = include_news,)
