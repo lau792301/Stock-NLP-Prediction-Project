@@ -4,3 +4,4 @@ news_dataset/nytimes_data/
 news_dataset/news_dataset.dat
 # Hong
 news_dataset/bak.py
+bak/*

@@ -3,10 +3,7 @@ import pandas as pd
 import numpy as np
 
 from keras.models import Sequential
-from keras.layers import Dense, UpSampling1D
-from keras.layers import LSTM
-from keras.layers import RepeatVector
-from keras.layers import TimeDistributed, Lambda, RepeatVector
+from keras.layers import LSTM, RepeatVector, Dense, UpSampling1D, TimeDistributed, Lambda, RepeatVector, Dropout
 from sklearn.model_selection import train_test_split
 from tensorflow import feature_column
 import tensorflow as tf
@@ -161,7 +158,7 @@ def integrate_month_value(inc_month_value_dict, split_month = 12):
 # %%
 # Model Part
 def build_model(n_inputs, n_features, n_outputs, auto_encoder = True, n_repeat = 3, learning_rate = 0.001,
-                n_neurons =  N_NEURONS):
+                n_neurons =  N_NEURONS, dropout = 0.2):
     # def self_measurement(y_true, y_pred):
     #     return tf.keras.backend.mean(y_pred)
 
@@ -190,12 +187,15 @@ def build_model(n_inputs, n_features, n_outputs, auto_encoder = True, n_repeat =
                             True, return all time step hidden value. It also return lstm1, state_h, state_c.
                         
     '''
+    if  dropout > 0:
+        model.add(Dropout(dropout))
     # Dimension Adjustment
     model.add(UpSampling1D(n_outputs))
     model.add(Lambda(lambda x: x[:,-n_outputs:,:]))
     # https://stackoverflow.com/questions/55532683/why-is-timedistributed-not-needed-in-my-keras-lstm
     # model.add(Dense(1))
-    model.add(TimeDistributed(Dense(1, activation = 'softmax', kernel_initializer='random_uniform', bias_initializer='zeros')))
+
+    model.add(TimeDistributed(Dense(1, activation = 'sigmoid', kernel_initializer='random_uniform', bias_initializer='zeros')))
     opt = tf.keras.optimizers.Adam(learning_rate= learning_rate)
     model.compile(loss="binary_crossentropy", optimizer= opt,
                 metrics = ['accuracy'])#,  self_measurement])
@@ -228,14 +228,27 @@ def train_model(model, X, Y, valid_split = 0.1, shuffle = True, random_state = S
 # %%
 def run(stock_code  = STOCK_CODE, scale = True, n_neurons  = N_NEURONS, 
     auto_encoder  = False, learning_rate =  LEARNING_RATE, n_input = N_INPUT,
-    include_news = True, training_valid_split = 0.1,
+    include_news = True, training_valid_split = 0.1, dropout = 0.2,
     split_month = 12):
     ###### Init ######
     output_dict = {}
     result_dict = {}
+    output_dict['meta_data'] = {
+        'stock_code' : stock_code,
+        'scale' : scale,
+        'n_neurons' : n_neurons,
+        'auto_encoder': auto_encoder,
+        'learning_rate' : learning_rate,
+        'n_input' : n_input,
+        'include_news' : include_news,
+        'training_valid_split': training_valid_split,
+        'split_month': split_month,
+        'dropout': dropout
+    }
+    print(output_dict['meta_data'])
     ######  Read Data ######
     new_df = pd.read_csv(NEWS_DATA_PATH)
-    df = get_full_data(STOCK_CODE, new_df)
+    df = get_full_data(stock_code, new_df)
     df['rec_date'] = pd.to_datetime(df['rec_date'])
     df['inc_month'] = (df['rec_date'].dt.year).astype(str) + (df['rec_date'].dt.month).astype(str).apply(lambda x:x.zfill(2))
     print('Read Data Done')
@@ -268,7 +281,7 @@ def run(stock_code  = STOCK_CODE, scale = True, n_neurons  = N_NEURONS,
     # Model Setup
     model = build_model(n_inputs = n_inputs,
                         n_features = n_features, n_outputs = n_outputs, auto_encoder= auto_encoder,n_repeat  = 10,
-                        learning_rate = learning_rate, n_neurons = n_neurons)
+                        learning_rate = learning_rate, n_neurons = n_neurons, dropout= dropout)
     # Model Training
     model, history = train_model(model , train_x, train_y, valid_split= training_valid_split)
     output_dict['model'] = model
@@ -288,9 +301,28 @@ def run(stock_code  = STOCK_CODE, scale = True, n_neurons  = N_NEURONS,
     return output_dict
         
 # %%
-output_dict = run()
+# output_dict = run()
 # %%
-for stock_code in ['QQQ', 'AAPL']:
-    for n_input in [7,14]:
+result_df = pd.DataFrame()
+for stock_code in ['QQQ']:
+    for n_input in [7]:
         for include_news in [True , False]:
-           run(stock_code = stock_code, include_news = include_news,)
+            for dropout in [0, 0.2, 0.4]:
+                model_result_dict = run(stock_code = stock_code, include_news = include_news,
+                                    n_input = n_input, dropout=dropout)
+                result_dict = model_result_dict['results']
+                meta_dict = model_result_dict['meta_data']
+                result_dict.update(meta_dict)
+                partial_df = pd.DataFrame([result_dict])
+                result_df = result_df.append(partial_df)
+# %%
+pd.set_option('display.max_columns', None)
+columns_selection = [
+    'stock_code', 'n_input', 'include_news', 'dropout',
+    'overall_training', 'overall_testing',
+    '201901', '201902','201903','201904','201905','201906','201907','201908', '201909',
+    '201910', '201911', '201912',
+    ]
+result_df2 = result_df[columns_selection].round(2).T
+result_df2.to_csv('QQQ_interim.csv')
+# %%
