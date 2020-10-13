@@ -74,10 +74,25 @@ consolidate_abstract_df = consolidate_abstract_df.fillna(0)
 full_consolidate = consolidate_headline_df.set_index('rec_date').join(consolidate_abstract_df.set_index('rec_date')).reset_index()
 
 # %%
-full_consolidate.to_csv('consolidated_news.csv', index = False)
+# Consolidation for 
+# positive = positive + neutral
+# negative = negative + compound
+full_consolidate_2 = full_consolidate.copy()
+for source in ['dj', 'nytimes', 'wsj']:
+    for news_type in ['headline', 'abstract']:
+        #positive
+        full_consolidate_2[f'{source}_{news_type}_pos'] = full_consolidate_2[f'{source}_{news_type}_pos'] +  full_consolidate_2[f'{source}_{news_type}_neu']
+        full_consolidate_2 = full_consolidate_2.drop(columns = f'{source}_{news_type}_neu')
+        #negative
+        full_consolidate_2[f'{source}_{news_type}_neg'] = full_consolidate_2[f'{source}_{news_type}_neg'] +  full_consolidate_2[f'{source}_{news_type}_compound']
+        full_consolidate_2 = full_consolidate_2.drop(columns = f'{source}_{news_type}_compound')
+
 
 # %%
-source_col = [col for col in full_consolidate.columns if 'dj' in col]
-full_consolidate[source_col]
+full_consolidate_2.to_csv('news_original.csv', index = False)
+
+# %%
+source_col = [col for col in full_consolidate_2.columns if 'dj' in col]
+full_consolidate_2[source_col]
 
 # %%
