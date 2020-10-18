@@ -72,7 +72,7 @@ consolidate_abstract_df = consolidate_abstract_df.fillna(0)
 
 # %%
 full_consolidate = consolidate_headline_df.set_index('rec_date').join(consolidate_abstract_df.set_index('rec_date')).reset_index()
-
+full_consolidate.to_csv('news_original.csv', index = False)
 # %%
 # Consolidation for 
 # positive = positive + neutral
@@ -89,7 +89,7 @@ for source in ['dj', 'nytimes', 'wsj']:
 
 
 # %%
-full_consolidate_2.to_csv('news_original.csv', index = False)
+full_consolidate_2.to_csv('news_original_grouped.csv', index = False)
 
 # %%
 source_col = [col for col in full_consolidate_2.columns if 'dj' in col]
