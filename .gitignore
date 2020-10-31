@@ -1,7 +1,11 @@
-# News multi json file
-news_dataset/nytimes_data/
+# NewData 
+news_dataset/*
 
-news_dataset/news_dataset.dat
+#
+gpu-farm/*
+
 # Hong
 news_dataset/bak.py
 bak/*
+.*
+__pycache__/*

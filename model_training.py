@@ -2,12 +2,14 @@
 import pandas as pd
 import numpy as np
 
-from keras.models import Sequential
-from keras.layers import LSTM, RepeatVector, Dense, UpSampling1D, TimeDistributed, Lambda, RepeatVector, Dropout
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, RepeatVector, Dense, UpSampling1D, TimeDistributed, Lambda, RepeatVector, Dropout
+# from keras.models import Sequential
+# from keras.layers import LSTM, RepeatVector, Dense, UpSampling1D, TimeDistributed, Lambda, RepeatVector, Dropout
 from sklearn.model_selection import train_test_split
 from tensorflow import feature_column
 import tensorflow as tf
-from keras.callbacks import EarlyStopping
+from tensorflow.keras.callbacks import EarlyStopping
 import random
 import argparse
 import os
@@ -346,7 +348,8 @@ def run(stock_code, news_type, news_is_cluster, n_input, n_neurons,
 def main(stock_code):
     overall_result_df = pd.DataFrame()
     overall_model_history = pd.DataFrame()
-    for news_type in ['original', 'original_grouped']:
+    for news_type in ['original', 'original_grouped', 
+                        'cleaned', 'cleaned_grouped']:
         for include_news in [True , False]:
             for news_is_cluster in [True, False]:
                 for n_input in [7,14,21,30]:

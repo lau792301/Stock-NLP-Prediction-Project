@@ -3,7 +3,7 @@ import pickle
 import datetime
 import pandas as pd
 # %%
-PATH = 'news_dataset/news_dataset.dat'
+PATH = 'news_dataset/news_dataset_v2.dat'
 # %%
 with open(PATH, "rb") as f:
     result_list = pickle.load(f)
@@ -17,7 +17,6 @@ for result in result_list:
     data_dict['headline'] = max(setiment_headline, key = setiment_headline.get)
     sentiment_abstract = result['sentiment_abstract']
     data_dict['abstract'] = max(sentiment_abstract, key = sentiment_abstract.get)
-
     news_list.append(data_dict)
 
 # %%
@@ -72,7 +71,7 @@ consolidate_abstract_df = consolidate_abstract_df.fillna(0)
 
 # %%
 full_consolidate = consolidate_headline_df.set_index('rec_date').join(consolidate_abstract_df.set_index('rec_date')).reset_index()
-full_consolidate.to_csv('news_original.csv', index = False)
+full_consolidate.to_csv('news_cleaned.csv', index = False)
 # %%
 # Consolidation for 
 # positive = positive + neutral
@@ -89,7 +88,7 @@ for source in ['dj', 'nytimes', 'wsj']:
 
 
 # %%
-full_consolidate_2.to_csv('news_original_grouped.csv', index = False)
+full_consolidate_2.to_csv('news_cleaned_grouped.csv', index = False)
 
 # %%
 source_col = [col for col in full_consolidate_2.columns if 'dj' in col]
