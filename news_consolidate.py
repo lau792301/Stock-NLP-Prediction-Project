@@ -3,21 +3,46 @@ import pickle
 import datetime
 import pandas as pd
 # %%
-PATH = 'news_dataset/news_dataset_v2.dat'
+PATH = 'news_dataset/news_bert.dat'
 # %%
 with open(PATH, "rb") as f:
     result_list = pickle.load(f)
+
 # %%
+# For news_bert.dat  (Since dataset format is different)
 news_list = []
+mapping_dict = {-1: 'neg', 0:'neu', 1: 'pos'}
+def _round(value):
+    if value >0:
+        return 1
+    elif value == 0:
+        return 0
+    else:
+        return -1
+
 for result in result_list:
     data_dict = {}
     data_dict['source'] = result['source']
     data_dict['rec_date'] = result['pub_date'].strftime('%Y-%m-%d')
-    setiment_headline = result['sentiment_headline']
-    data_dict['headline'] = max(setiment_headline, key = setiment_headline.get)
-    sentiment_abstract = result['sentiment_abstract']
-    data_dict['abstract'] = max(sentiment_abstract, key = sentiment_abstract.get)
+    setiment_headline = _round(result['sentiment_headline'])
+    data_dict['headline'] = mapping_dict[setiment_headline]
+    sentiment_abstract = _round(result['sentiment_abstract'])
+    data_dict['abstract'] =  mapping_dict[sentiment_abstract]
     news_list.append(data_dict)
+# %%
+# For news_dataset.dat, news_dataset_v2.dat 
+# news_list = []
+# for result in result_list:
+#     data_dict = {}
+#     data_dict['source'] = result['source']
+#     data_dict['rec_date'] = result['pub_date'].strftime('%Y-%m-%d')
+#     setiment_headline = result['sentiment_headline']
+#     del setiment_headline['compound']   # Delete Compound
+#     data_dict['headline'] = max(setiment_headline, key = setiment_headline.get)
+#     sentiment_abstract = result['sentiment_abstract']
+#     del sentiment_abstract['compound'] # Delete Compound
+#     data_dict['abstract'] = max(sentiment_abstract, key = sentiment_abstract.get)
+#     news_list.append(data_dict)
 
 # %%
 df = pd.DataFrame(news_list)
@@ -46,7 +71,6 @@ for source in  headline_count_df['source'].unique():
 consolidate_headline_df = consolidate_headline_df.fillna(0)
 
 # %%
-# %%
 abstract_count_df  = df.drop(columns = 'headline').groupby(['source', 'rec_date']).abstract.value_counts()
 abstract_count_df.name = 'count'
 abstract_count_df  = abstract_count_df.reset_index()
@@ -71,7 +95,7 @@ consolidate_abstract_df = consolidate_abstract_df.fillna(0)
 
 # %%
 full_consolidate = consolidate_headline_df.set_index('rec_date').join(consolidate_abstract_df.set_index('rec_date')).reset_index()
-full_consolidate.to_csv('news_cleaned.csv', index = False)
+full_consolidate.to_csv('news_tuned.csv', index = False)
 # %%
 # Consolidation for 
 # positive = positive + neutral
@@ -83,12 +107,11 @@ for source in ['dj', 'nytimes', 'wsj']:
         full_consolidate_2[f'{source}_{news_type}_pos'] = full_consolidate_2[f'{source}_{news_type}_pos'] +  full_consolidate_2[f'{source}_{news_type}_neu']
         full_consolidate_2 = full_consolidate_2.drop(columns = f'{source}_{news_type}_neu')
         #negative
-        full_consolidate_2[f'{source}_{news_type}_neg'] = full_consolidate_2[f'{source}_{news_type}_neg'] +  full_consolidate_2[f'{source}_{news_type}_compound']
-        full_consolidate_2 = full_consolidate_2.drop(columns = f'{source}_{news_type}_compound')
+        full_consolidate_2[f'{source}_{news_type}_neg'] = full_consolidate_2[f'{source}_{news_type}_neg'] 
 
 
 # %%
-full_consolidate_2.to_csv('news_cleaned_grouped.csv', index = False)
+full_consolidate_2.to_csv('news_tuned_grouped.csv', index = False)
 
 # %%
 source_col = [col for col in full_consolidate_2.columns if 'dj' in col]
