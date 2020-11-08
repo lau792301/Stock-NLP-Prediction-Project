@@ -4,12 +4,13 @@ from pandas_datareader import data as pdr
 
 
 import pandas as pd
+import numpy as np
 import holidays
 
 # %%
 START_DATE = '2000-01-01'
 END_DATE = '2019-12-31'
-NEWS_DATA_PATH = 'consolidated_news.csv'
+#NEWS_DATA_PATH = 'news_original.csv'
 # %%
 
 ## Usage
@@ -92,22 +93,26 @@ def consoildate(stock_df, new_df):
     combined_df = stock_df.set_index('rec_date').join(new_df.set_index('rec_date'), how ='inner')
     return combined_df
 
-
-def get_full_data(stock_code, new_df, start_date = START_DATE, end_date = END_DATE, save = False):
+# TODO: change the new_df as init reading, and add the paramter to control read refactored_news_df or not
+def get_full_data(stock_code, news_type, news_is_cluster = False,
+                start_date = START_DATE, end_date = END_DATE, save = False):
+    news_df = pd.read_csv(f'news_{news_type}.csv')
+    if news_is_cluster:
+        news_df = sentiment_clustering(news_df)
     stock_data = get_finance_data(stock_code, start_date = start_date, end_date = end_date)
     stock_data = fill_missing(stock_data)
     pre_stock_data = preprocessing(stock_data)
-    full_data = consoildate(pre_stock_data, new_df)
+    full_data = consoildate(pre_stock_data, news_df)
     full_data = full_data.reset_index()
     if save:
         full_data.to_csv(f'{stock_code}_full_dataset.csv', index = False)
     return full_data
 
 
-news_data = pd.read_csv(NEWS_DATA_PATH)
+# news_data = pd.read_csv(NEWS_DATA_PATH)
 
-get_full_data('QQQ', news_data, save  = True)
-get_full_data('AAPL', news_data, save  = True)
+# get_full_data('QQQ', news_data, save  = True)
+# get_full_data('AAPL', news_data, save  = True)
 # full_dataset = get_full_data('QQQ', news_data, save  = True)
 
 # stock_data = get_finance_data('AAA', start_date = START_DATE, end_date = END_DATE)
@@ -115,5 +120,58 @@ get_full_data('AAPL', news_data, save  = True)
 # pre_stock_data = preprocessing(stock_data)
 
 # %%
+import numpy as np
+def sentiment_clustering(news_df, except_cols = ['rec_date']):
+    df = news_df.copy()
+    output_df = df.copy()
+    setiment_cols = list(df.drop(columns = except_cols).columns)
 
+    for col in setiment_cols:
+        col_series = df[col]
+        #Under 95% population to create cluster group
+        lower_limit, upper_limit = np.quantile(col_series, 0.025), np.quantile(col_series, 0.975)
+        filtered_col = col_series[(col_series> lower_limit) & (col_series < upper_limit)]
+        if len(filtered_col) == 0:
+            g1 = lower_limit
+            g2 = upper_limit
+        else:
+            g1 = np.quantile(filtered_col, 0.33)
+            g2 = np.quantile(filtered_col, 0.66)
+        print(col, g1,g2)
+        # cluster to be group value
+        s = output_df[col]
+        condition = [
+            (s <= g1),
+            (s > g1) & (s <= g2),
+            (s > g2)
+        ]
+        group = [1,2,3]
+        output_df[col] = np.select(condition, group)
+    return output_df
+# %%
+# df = pd.read_csv('news_original.csv')
+# output_df = df.copy()
+# setiment_cols = list(df.drop(columns = ['rec_date']).columns)
+
+# for col in setiment_cols:
+#     col_series = df[col]
+#     #Under 95% population to create cluster group
+#     lower_limit, upper_limit = np.quantile(col_series, 0.025), np.quantile(col_series, 0.975)
+#     filtered_col = col_series[(col_series> lower_limit) & (col_series < upper_limit)]
+#     if len(filtered_col) == 0:
+#         g1 = lower_limit
+#         g2 = upper_limit
+#     else:
+#         g1 = np.quantile(filtered_col, 0.33)
+#         g2 = np.quantile(filtered_col, 0.66)
+#     print(col, g1,g2)
+#     # cluster to be group value
+#     s = output_df[col]
+#     condition = [
+#         (s <= g1),
+#         (s > g1) & (s <= g2),
+#         (s > g2)
+#     ]
+#     group = [1,2,3]
+#     output_df[col] = np.select(condition, group)
 # %%

@@ -2,27 +2,41 @@
 import pandas as pd
 import numpy as np
 
-from keras.models import Sequential
-from keras.layers import LSTM, RepeatVector, Dense, UpSampling1D, TimeDistributed, Lambda, RepeatVector, Dropout
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, RepeatVector, Dense, UpSampling1D, TimeDistributed, Lambda, RepeatVector, Dropout
+# from keras.models import Sequential
+# from keras.layers import LSTM, RepeatVector, Dense, UpSampling1D, TimeDistributed, Lambda, RepeatVector, Dropout
 from sklearn.model_selection import train_test_split
 from tensorflow import feature_column
 import tensorflow as tf
-from keras.callbacks import EarlyStopping
+from tensorflow.keras.callbacks import EarlyStopping
 import random
+import argparse
 import os
 
 from build_dataset import get_full_data
-
+import datetime
 # %%
 SEED_VALUE = 2020
-N_INPUT = 7
-N_OUTPUT = 1
-EPOCHS = 50
-LEARNING_RATE = 0.001
-N_NEURONS =  100
+## getting the arguments
+parser = argparse.ArgumentParser(description='Run Cronjob')
+parser.add_argument('--stock', type=str, help="stock_code of training model", required= True)
+parser.add_argument('--epochs', type=int, help="Iteration of training model")
+parser.add_argument('--lr', type=float, help="learing rate of training model")
+args = parser.parse_args()
+# Environment Variable Setting
+STOCK_CODE = args.stock
+EPOCHS = args.epochs if args.epochs else 100
+LEARNING_RATE = args.lr if args.lr else 0.001
+# %%
+# N_INPUT = 7
+# N_OUTPUT = 1
+# EPOCHS = 50
+# LEARNING_RATE = 0.001
+# N_NEURONS =  100
 
-STOCK_CODE = 'QQQ'
-NEWS_DATA_PATH = 'consolidated_news.csv'
+# STOCK_CODE = 'QQQ'
+# NEWS_DATA_PATH = 'news_original.csv'
 # %%
 # Preprocessing
 def scaling(df, meta_data = False):
@@ -42,15 +56,13 @@ def scaling(df, meta_data = False):
         #
         col_info['max'] = df[col].max()
         col_info['min'] = df[col].min()
-        
         df[col] = (df[col] - col_info['min']) / (col_info['max'] - col_info['min'])
-        
         meta_data_dict[col] = col_info
     if meta_data:
         return df, meta_data_dict
     return df
 
-def get_feature_layer(news_col_list, stock = True, news = True, holiday = True, month =  True, weekday = True):
+def get_feature_layer(news_col_list, news_is_cluster = False, stock = True, news = True, holiday = True, month =  True, weekday = True):
     #  FeatureColumn
     feature_columns = []
     if stock:
@@ -60,12 +72,18 @@ def get_feature_layer(news_col_list, stock = True, news = True, holiday = True, 
                         'volume_change', 'price_gap']
         for header in numeric_cols :
             feature_columns.append(feature_column.numeric_column(header))
-    if news:
+    if (news == True) & (news_is_cluster == False):
         for header in news_col_list:
             feature_columns.append(feature_column.numeric_column(header))
     
 
     # # Categorical Columns
+    if (news == True) & (news_is_cluster == True):
+        for header in news_col_list:
+            news_type = feature_column.categorical_column_with_vocabulary_list(
+                        header, [1,2,3])
+            news_type_one_hot = feature_column.indicator_column(news_type)
+            feature_columns.append(news_type_one_hot)
     if month:
     # Month
         month_type = feature_column.categorical_column_with_vocabulary_list(
@@ -157,8 +175,8 @@ def integrate_month_value(inc_month_value_dict, split_month = 12):
 
 # %%
 # Model Part
-def build_model(n_inputs, n_features, n_outputs, auto_encoder = True, n_repeat = 3, learning_rate = 0.001,
-                n_neurons =  N_NEURONS, dropout = 0.2):
+def build_model(n_inputs, n_features, n_outputs, n_neurons, 
+                auto_encoder = True, n_repeat = 3, learning_rate = LEARNING_RATE, dropout = 0.2):
     # def self_measurement(y_true, y_pred):
     #     return tf.keras.backend.mean(y_pred)
 
@@ -226,8 +244,9 @@ def train_model(model, X, Y, valid_split = 0.1, shuffle = True, random_state = S
 
 
 # %%
-def run(stock_code  = STOCK_CODE, scale = True, n_neurons  = N_NEURONS, 
-    auto_encoder  = False, learning_rate =  LEARNING_RATE, n_input = N_INPUT,
+def run(stock_code, news_type, news_is_cluster, n_input, n_neurons,
+    scale = True,
+    auto_encoder  = False, learning_rate =  LEARNING_RATE, 
     include_news = True, training_valid_split = 0.1, dropout = 0.2,
     split_month = 12):
     ###### Init ######
@@ -235,6 +254,8 @@ def run(stock_code  = STOCK_CODE, scale = True, n_neurons  = N_NEURONS,
     result_dict = {}
     output_dict['meta_data'] = {
         'stock_code' : stock_code,
+        'news_type' : news_type,
+        'news_is_cluster' : news_is_cluster,
         'scale' : scale,
         'n_neurons' : n_neurons,
         'auto_encoder': auto_encoder,
@@ -247,8 +268,8 @@ def run(stock_code  = STOCK_CODE, scale = True, n_neurons  = N_NEURONS,
     }
     print(output_dict['meta_data'])
     ######  Read Data ######
-    new_df = pd.read_csv(NEWS_DATA_PATH)
-    df = get_full_data(stock_code, new_df)
+    # new_df = pd.read_csv(NEWS_DATA_PATH)
+    df = get_full_data(stock_code, news_type, news_is_cluster = news_is_cluster)
     df['rec_date'] = pd.to_datetime(df['rec_date'])
     df['inc_month'] = (df['rec_date'].dt.year).astype(str) + (df['rec_date'].dt.month).astype(str).apply(lambda x:x.zfill(2))
     print('Read Data Done')
@@ -260,7 +281,7 @@ def run(stock_code  = STOCK_CODE, scale = True, n_neurons  = N_NEURONS,
     ###### Preprocessing ######
     news_cols = [col for col in df.columns if ('headline'  in col) or ('abstract' in col)]
     feature_layer = get_feature_layer(news_col_list = news_cols , news = include_news)
-    X, Y = feature_layer(dict(df)).numpy(), df['up_down'].values.reshape(-1,1)
+    X, Y = feature_layer(dict(df.drop(columns = 'rec_date'))).numpy(), df['up_down'].values.reshape(-1,1)
     # Index Filtering for only online data
     meta_index_dict = get_meta_index(df, n_input)
     offline_index_list =  meta_index_dict['offline_index']
@@ -303,26 +324,79 @@ def run(stock_code  = STOCK_CODE, scale = True, n_neurons  = N_NEURONS,
 # %%
 # output_dict = run()
 # %%
-result_df = pd.DataFrame()
-for stock_code in ['QQQ']:
-    for n_input in [7]:
+# result_df = pd.DataFrame()
+# for stock_code in ['QQQ']:
+#     for news_type in ['original', 'original_grouped']:
+#         for include_news in [True , False]:
+#             for news_is_cluster in [True, False]:
+#                 for n_input in [7,14,21,30]:
+#                     for dropout in [0, 0.2, 0.4]:
+#                         for is_auto_encoder in [True, False]:
+#                             model_result_dict = run(stock_code = stock_code, 
+#                                                 news_type = news_type, news_is_cluster = news_is_cluster,
+#                                                 include_news = include_news,
+#                                                 auto_encoder= is_auto_encoder,
+#                                                 n_input = n_input, dropout=dropout)
+#                             result_dict = model_result_dict['results']
+#                             meta_dict = model_result_dict['meta_data']
+#                             result_dict.update(meta_dict)
+#                             partial_df = pd.DataFrame([result_dict])
+#                             result_df = result_df.append(partial_df)
+
+
+# %%
+def main(stock_code):
+    overall_result_df = pd.DataFrame()
+    overall_model_history = pd.DataFrame()
+    for news_type in ['original', 'original_grouped', 
+                        'cleaned', 'cleaned_grouped']:
         for include_news in [True , False]:
-            for dropout in [0, 0.2, 0.4]:
-                model_result_dict = run(stock_code = stock_code, include_news = include_news,
-                                    n_input = n_input, dropout=dropout)
-                result_dict = model_result_dict['results']
-                meta_dict = model_result_dict['meta_data']
-                result_dict.update(meta_dict)
-                partial_df = pd.DataFrame([result_dict])
-                result_df = result_df.append(partial_df)
+            for news_is_cluster in [True, False]:
+                for n_input in [7,14,21,30]:
+                    for dropout in [0, 0.2, 0.4]:
+                        for n_neurons in [50, 100, 150, 200]:
+                            for is_auto_encoder in [True, False]:
+                                model_result_dict = run(stock_code = stock_code, 
+                                                    news_type = news_type, news_is_cluster = news_is_cluster,
+                                                    include_news = include_news, n_neurons = n_neurons,
+                                                    auto_encoder= is_auto_encoder,
+                                                    n_input = n_input, dropout=dropout)
+                                # Common
+                                meta_dict = model_result_dict['meta_data']
+                                # Model Result
+                                result_dict = model_result_dict['results']
+                                result_dict.update(meta_dict)
+                                result_partial_df = pd.DataFrame([result_dict])
+                                overall_result_df = overall_result_df.append(result_partial_df)
+                                # Model History
+                                model_history = model_result_dict['history'].history
+                                model_history.update(meta_dict)
+                                model_partial_df = pd.DataFrame(model_history)
+                                model_partial_df.index = model_partial_df.index.set_names('epochs')
+                                model_partial_df = model_partial_df.reset_index(drop = False)
+                                overall_model_history = overall_model_history.append(model_partial_df)
+    ### Save ###
+    current_time = datetime.datetime.now().strftime('%Y%m%d%H%M')
+    stock_code = stock_code.upper()
+    # Result
+    overall_result_df.to_csv(f'{current_time}_{stock_code}_result.csv', index = False)
+    # Model History
+    overall_model_history.to_csv(f'{current_time}_{stock_code}_model_history.csv', index = False)
+    print('Training and Tuning are Done')
+
 # %%
-pd.set_option('display.max_columns', None)
-columns_selection = [
-    'stock_code', 'n_input', 'include_news', 'dropout',
-    'overall_training', 'overall_testing',
-    '201901', '201902','201903','201904','201905','201906','201907','201908', '201909',
-    '201910', '201911', '201912',
-    ]
-result_df2 = result_df[columns_selection].round(2).T
-result_df2.to_csv('QQQ_interim.csv')
+# pd.set_option('display.max_columns', None)
+# columns_selection = [
+#     'stock_code', 'n_input', 'include_news', 'dropout',
+#     'overall_training', 'overall_testing',
+#     '201901', '201902','201903','201904','201905','201906','201907','201908', '201909',
+#     '201910', '201911', '201912',
+#     ]
+# result_df2 = result_df[columns_selection].round(2).T
+# result_df2.to_csv('QQQ_interim.csv')
 # %%
+if __name__ == '__main__':
+    print('STOCK_CODE', STOCK_CODE)
+    print('EPOCHS:', EPOCHS)
+    print('LEARNING_RATE:', LEARNING_RATE)
+    main(STOCK_CODE)
