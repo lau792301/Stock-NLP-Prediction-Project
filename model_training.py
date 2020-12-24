@@ -20,14 +20,16 @@ import datetime
 SEED_VALUE = 2020
 ## getting the arguments
 parser = argparse.ArgumentParser(description='Run Cronjob')
-parser.add_argument('--stock', type=str, help="stock_code of training model", required= True)
+parser.add_argument('--stock', type=str, help="stock_code of training model")
 parser.add_argument('--epochs', type=int, help="Iteration of training model")
 parser.add_argument('--lr', type=float, help="learing rate of training model")
+parser.add_argument('--mode', type=str, help="training / prediciton")
 args = parser.parse_args()
 # Environment Variable Setting
 STOCK_CODE = args.stock
-EPOCHS = args.epochs if args.epochs else 100
+EPOCHS = args.epochs if args.epochs else 150
 LEARNING_RATE = args.lr if args.lr else 0.001
+MODE = args.mode if args.mode else 'train'
 # %%
 # N_INPUT = 7
 # N_OUTPUT = 1
@@ -176,12 +178,15 @@ def integrate_month_value(inc_month_value_dict, split_month = 12):
 # %%
 # Model Part
 def build_model(n_inputs, n_features, n_outputs, n_neurons, 
-                auto_encoder = True, n_repeat = 3, learning_rate = LEARNING_RATE, dropout = 0.2):
+                auto_encoder = True, n_repeat = 3, learning_rate = LEARNING_RATE, dropout = 0.2,
+                repeat_vector = None):
     # def self_measurement(y_true, y_pred):
     #     return tf.keras.backend.mean(y_pred)
 
     # define model
     model = Sequential()
+    if repeat_vector == None:
+        repeat_vector = n_inputs
     '''
     # LSTM AutoEncoder (Unsupervised Learning)
     # https://machinelearningmastery.com/lstm-autoencoders/
@@ -193,7 +198,7 @@ def build_model(n_inputs, n_features, n_outputs, n_neurons,
         # model.add(LSTM(n_neurons, return_sequences=True))
         model.add(LSTM(128, input_shape = (n_inputs, n_features), return_sequences=True))
         model.add(LSTM(64, activation='relu', return_sequences=False))
-        model.add(RepeatVector(n_inputs))
+        model.add(RepeatVector(repeat_vector))
         model.add(LSTM(64, activation='relu', return_sequences=True))
         model.add(LSTM(128, activation='relu', return_sequences=True))
         model.add(LSTM(n_neurons, return_sequences=True))
@@ -220,7 +225,7 @@ def build_model(n_inputs, n_features, n_outputs, n_neurons,
     return model
 
 def train_model(model, X, Y, valid_split = 0.1, shuffle = True, random_state = SEED_VALUE, epochs = EPOCHS,
-                early_stop =  False):
+                early_stop =  True):
     # Set Seed
     '''
     Keras gets its source of randomness from the NumPy random number generator.
@@ -235,7 +240,7 @@ def train_model(model, X, Y, valid_split = 0.1, shuffle = True, random_state = S
     train_x, valid_x, train_y, valid_y =  train_test_split(X, Y, shuffle = shuffle, random_state = random_state, test_size = valid_split)
     # simple early stopping
     if early_stop:
-        es = EarlyStopping(monitor='val_accuracy', mode='max', verbose=1, patience = min(int(EPOCHS * 0.1), 50))
+        es = EarlyStopping(monitor='val_accuracy', mode='max', verbose=1, patience = min(int(EPOCHS * 0.2), 50))
         history  = model.fit(train_x, train_y, validation_data = (valid_x, valid_y), epochs=epochs, callbacks = [es])
     else:
         history  = model.fit(train_x, train_y, validation_data = (valid_x, valid_y), epochs=epochs)
@@ -248,7 +253,7 @@ def run(stock_code, news_type, news_is_cluster, n_input, n_neurons,
     scale = True,
     auto_encoder  = False, learning_rate =  LEARNING_RATE, 
     include_news = True, training_valid_split = 0.1, dropout = 0.2,
-    split_month = 12):
+    split_month = 12, repeat_vector = None):
     ###### Init ######
     output_dict = {}
     result_dict = {}
@@ -264,7 +269,8 @@ def run(stock_code, news_type, news_is_cluster, n_input, n_neurons,
         'include_news' : include_news,
         'training_valid_split': training_valid_split,
         'split_month': split_month,
-        'dropout': dropout
+        'dropout': dropout,
+        'repeat_vector': repeat_vector
     }
     print(output_dict['meta_data'])
     ######  Read Data ######
@@ -307,6 +313,11 @@ def run(stock_code, news_type, news_is_cluster, n_input, n_neurons,
     model, history = train_model(model , train_x, train_y, valid_split= training_valid_split)
     output_dict['model'] = model
     output_dict['history'] = history
+    output_dict['data'] = {'train_x': train_x, 'train_y': train_y, 'test_x': test_x, 'test_y': test_y,
+                            'x': X, 'y':Y, 'online_x':online_monthly_x_value_dict, 'online_y': online_monthly_y_value_dict,
+                            'df': df, 't_x':T_X, 't_y': T_Y}
+    output_dict['predict'] = {'train': model.predict(train_x), 'test': model.predict(test_x), 'full': model.predict(T_X)}
+    output_dict['date_index'] = {'meta': meta_index_dict, 'offline': offline_index_list, 'month': month_index_dict}
     # Result Measurement
     result_dict['overall_training'] = model.evaluate(train_x, train_y)[1]
     result_dict['overall_testing'] =  model.evaluate(test_x, test_y)[1]
@@ -343,19 +354,24 @@ def run(stock_code, news_type, news_is_cluster, n_input, n_neurons,
 #                             partial_df = pd.DataFrame([result_dict])
 #                             result_df = result_df.append(partial_df)
 
-
 # %%
 def main(stock_code):
+    # Create Directory
+    try:
+        os.mkdir(stock_code)
+    except:
+        print(f'{stock_code} directory is exist')
     overall_result_df = pd.DataFrame()
     overall_model_history = pd.DataFrame()
-    for news_type in ['original', 'original_grouped', 
-                        'cleaned', 'cleaned_grouped']:
-        for include_news in [True , False]:
+    for news_type in ['cleaned', 'tuned',]:
+                        #'cleaned_grouped', 'tuned_grouped']: # 'original', 'original_grouped', 
+        for include_news in [True ,]: #False]:
             for news_is_cluster in [True, False]:
-                for n_input in [7,14,21,30]:
-                    for dropout in [0, 0.2, 0.4]:
-                        for n_neurons in [50, 100, 150, 200]:
+                for n_input in [7,14,21,30]: #30]:
+                    for dropout in [0.2,]: #0, 0.4]:
+                        for n_neurons in [100,150,]:# 50,  200]:
                             for is_auto_encoder in [True, False]:
+                                # for repeat_vector in [3,6,9]:
                                 model_result_dict = run(stock_code = stock_code, 
                                                     news_type = news_type, news_is_cluster = news_is_cluster,
                                                     include_news = include_news, n_neurons = n_neurons,
@@ -379,9 +395,9 @@ def main(stock_code):
     current_time = datetime.datetime.now().strftime('%Y%m%d%H%M')
     stock_code = stock_code.upper()
     # Result
-    overall_result_df.to_csv(f'{current_time}_{stock_code}_result.csv', index = False)
+    overall_result_df.to_csv(f'{stock_code}/{current_time}_result.csv', index = False)
     # Model History
-    overall_model_history.to_csv(f'{current_time}_{stock_code}_model_history.csv', index = False)
+    overall_model_history.to_csv(f'{stock_code}/{current_time}_model_history.csv', index = False)
     print('Training and Tuning are Done')
 
 # %%
@@ -395,8 +411,43 @@ def main(stock_code):
 # result_df2 = result_df[columns_selection].round(2).T
 # result_df2.to_csv('QQQ_interim.csv')
 # %%
+def get_prediction_result(attribute, number = None):
+    result_df = pd.DataFrame()
+    times = ['202011011916', '202011021749', '202011031300']
+    # Read Trained Model Result
+    for file_name in times:
+        result_df = result_df.append(pd.read_csv(f'model_result/{file_name}_result.csv'))
+    # Split into Dict
+    result_dict = {}
+    for stock_code in ['QQQ', 'BAC', 'AAPL']:
+        result_dict[stock_code] = result_df[result_df['stock_code']== stock_code].copy().reset_index(drop= True)
+    # Get the Best Parameters
+    MODEL_PARAMS = ['news_type', 'news_is_cluster', 'auto_encoder', 'learning_rate', 
+            'n_input', 'include_news','dropout', 'n_neurons']
+    for stock_code, stock_result_df in result_dict.items():
+        # PATH_BASE = f'model_result/{stock_code}/'
+        best_model = stock_result_df[stock_result_df[f'overall_{attribute}'] == stock_result_df[f'overall_{attribute}'].max()].iloc[0]
+        model_params = best_model[MODEL_PARAMS].to_dict()
+        output_dict = run(stock_code=stock_code, **model_params)
+        # Data Adjustement
+        full_df = output_dict['data']['df']
+        input_df = full_df[model_params['n_input']:]
+        prediction_value = list(output_dict['predict']['full'][:,-1,-1].round())
+        input_df['predict'] = prediction_value
+        input_df[['rec_date', 'open', 'high', 'low', 'close', 'volume', 'weekday', 'month', 'holiday',
+                'close_change', 'volume_change', 'price_gap', 'is_closed_by_high','is_closed_by_low',
+                 'up_down', 'predict']].to_csv(f'model_result/prediction/{stock_code}_prediction_{number}.csv', index = False)
+
+# %%
 if __name__ == '__main__':
-    print('STOCK_CODE', STOCK_CODE)
-    print('EPOCHS:', EPOCHS)
-    print('LEARNING_RATE:', LEARNING_RATE)
-    main(STOCK_CODE)
+    if MODE == 'train':
+        print('STOCK_CODE', STOCK_CODE)
+        print('EPOCHS:', EPOCHS)
+        print('LEARNING_RATE:', LEARNING_RATE)
+        main(STOCK_CODE)
+    elif MODE == 'predict':
+        pass
+    else:
+        raise ValueError('Not valid mode')
+
+# %%
